@@ -1008,6 +1008,16 @@ RSpec.describe 'modules/payloads', :content do
                           reference_name: 'cmd/unix/reverse_stub'
   end
 
+  context 'cmd/unix/reverse_tclsh' do
+    it_should_behave_like 'payload cached size is consistent',
+                          ancestor_reference_names: [
+                              'singles/cmd/unix/reverse_tclsh'
+                          ],
+                          dynamic_size: false,
+                          modules_pathname: modules_pathname,
+                          reference_name: 'cmd/unix/reverse_tclsh'
+  end
+
   context 'cmd/unix/reverse_zsh' do
     it_should_behave_like 'payload cached size is consistent',
                           ancestor_reference_names: [
@@ -2161,6 +2171,17 @@ RSpec.describe 'modules/payloads', :content do
                           dynamic_size: false,
                           modules_pathname: modules_pathname,
                           reference_name: 'osx/x64/meterpreter/reverse_tcp'
+  end
+
+  context 'osx/x64/meterpreter/reverse_tcp_uuid' do
+    it_should_behave_like 'payload cached size is consistent',
+                          ancestor_reference_names: [
+                              'stagers/osx/x64/reverse_tcp_uuid',
+                              'stages/osx/x64/meterpreter'
+                          ],
+                          dynamic_size: false,
+                          modules_pathname: modules_pathname,
+                          reference_name: 'osx/x64/meterpreter/reverse_tcp_uuid'
   end
 
   context 'osx/x64/meterpreter_reverse_http' do

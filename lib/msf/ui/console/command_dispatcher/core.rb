@@ -70,8 +70,15 @@ class Core
     "-v" => [ false, "Print more detailed info.  Use with -i and -l"  ])
 
   @@tip_opts = Rex::Parser::Arguments.new(
+    "-h" => [ false, "Help banner."                                   ])
+
+  @@debug_opts = Rex::Parser::Arguments.new(
     "-h" => [ false, "Help banner."                                   ],
-    "-l" => [ false, "List all available tips."                       ])
+    "-d" => [ false, "Display the Datastore Information."             ],
+    "-c" => [ false, "Display command history."                       ],
+    "-e" => [ false, "Display the most recent Error and Stack Trace." ],
+    "-l" => [ false, "Display the most recent logs."                  ],
+    "-v" => [ false, "Display versions and install info."             ])
 
   @@connect_opts = Rex::Parser::Arguments.new(
     "-h" => [ false, "Help banner."                                   ],
@@ -104,7 +111,9 @@ class Core
       "cd"         => "Change the current working directory",
       "connect"    => "Communicate with a host",
       "color"      => "Toggle color",
+      "debug"      => "Display information useful for debugging",
       "exit"       => "Exit the console",
+      "features"   => "Display the list of not yet released features that can be opted in to",
       "get"        => "Gets the value of a context-specific variable",
       "getg"       => "Gets the value of a global variable",
       "grep"       => "Grep the output of another command",
@@ -119,7 +128,7 @@ class Core
       "set"        => "Sets a context-specific variable to a value",
       "setg"       => "Sets a global variable to a value",
       "sleep"      => "Do nothing for the specified number of seconds",
-      "tip"        => "Show a useful productivity tip",
+      "tips"       => "Show a list of useful productivity tips",
       "threads"    => "View and manipulate background threads",
       "unload"     => "Unload a framework plugin",
       "unset"      => "Unsets one or more context-specific variables",
@@ -139,6 +148,10 @@ class Core
     @previous_module = nil
     @previous_target = nil
     @history_limit = 100
+  end
+
+  def deprecated_commands
+    ['tip']
   end
 
   #
@@ -257,20 +270,22 @@ class Core
 
   end
 
-  def cmd_tip_help
-    print_line "Usage: tip [options]"
+  def cmd_tips_help
+    print_line "Usage: tips [options]"
     print_line
-    print_line "Print a useful tip on how to use Metasploit"
+    print_line "Print a useful list of productivity tips on how to use Metasploit"
     print @@tip_opts.usage
   end
 
+  alias cmd_tip_help cmd_tips_help
+
   #
-  # Display a useful productivity tip to the user.
+  # Display useful productivity tips to the user.
   #
-  def cmd_tip(*args)
+  def cmd_tips(*args)
     if args.include?("-h")
       cmd_tip_help
-    elsif args.include?("-l")
+    else
       tbl = Table.new(
         Table::Style::Default,
         'Columns' => %w[Id Tip]
@@ -281,8 +296,56 @@ class Core
       end
 
       print(tbl.to_s)
+    end
+  end
+
+  alias cmd_tip cmd_tips
+
+
+  def cmd_debug_help
+    print_line "Usage: debug [options]"
+    print_line
+    print_line("Print a set of information in a Markdown format to be included when opening an Issue on Github. " +
+                 "This information helps us fix problems you encounter and should be included when you open a new issue: " +
+                 Debug.issue_link)
+    print @@debug_opts.usage
+  end
+
+  #
+  # Display information useful for debugging errors.
+  #
+  def cmd_debug(*args)
+    if args.empty?
+      print_line Debug.all(framework, driver)
+      return
+    end
+
+    if args.include?("-h")
+      cmd_debug_help
     else
-      print_line Tip.sample
+      output = ""
+      @@debug_opts.parse(args) do |opt|
+        case opt
+        when '-d'
+          output << Debug.datastore(framework, driver)
+        when '-c'
+          output << Debug.history(driver)
+        when '-e'
+          output << Debug.errors
+        when '-l'
+          output << Debug.logs
+        when '-v'
+          output << Debug.versions(framework)
+        end
+      end
+
+      if output.empty?
+        print_line("Valid argument was not given.")
+        cmd_debug_help
+      else
+        output = Debug.preamble + output
+        print_line output
+      end
     end
   end
 
@@ -500,6 +563,120 @@ class Core
   end
 
   alias cmd_quit cmd_exit
+
+  def cmd_features_help
+    print_line <<~CMD_FEATURE_HELP
+      Enable or disable unreleased features that Metasploit supports
+
+      Usage:
+        features set feature_name [true/false]
+        features print
+
+      Subcommands:
+        set - Enable or disable a given feature
+        print - show all available features and their current configuration
+
+      Examples:
+        View available features:
+          features print
+
+        Enable a feature:
+          features set new_feature true
+
+        Disable a feature:
+          features set new_feature false
+    CMD_FEATURE_HELP
+  end
+
+  #
+  # This method handles the features command which allows a user to opt into enabling
+  # features that are not yet released to everyone by default.
+  #
+  def cmd_features(*args)
+    args << 'print' if args.empty?
+
+    action, *rest = args
+    case action
+    when 'set'
+      feature_name, value = rest
+
+      unless framework.features.exists?(feature_name)
+        print_warning("Feature name '#{feature_name}' is not available. Either it has been removed, integrated by default, or does not exist in this version of Metasploit.")
+        print_warning("Currently supported features: #{framework.features.names.join(', ')}") if framework.features.all.any?
+        print_warning('There are currently no features to toggle.') if framework.features.all.empty?
+        return
+      end
+
+      unless %w[true false].include?(value)
+        print_warning('Please specify true or false to configure this feature.')
+        return
+      end
+
+      framework.features.set(feature_name, value == 'true')
+      print_line("#{feature_name} => #{value}")
+    when 'print'
+      if framework.features.all.empty?
+        print_line 'There are no features to enable at this time. Either the features have been removed, or integrated by default.'
+        return
+      end
+
+      features_table = Table.new(
+        Table::Style::Default,
+        'Header' => 'Features table',
+        'Prefix' => "\n",
+        'Postfix' => "\n",
+        'Columns' => [
+          '#',
+          'Name',
+          'Enabled',
+          'Description',
+        ]
+      )
+
+      framework.features.all.each.with_index do |feature, index|
+        features_table << [
+          index,
+          feature[:name],
+          feature[:enabled].to_s,
+          feature[:description]
+        ]
+      end
+
+      print_line features_table.to_s
+    else
+      cmd_help
+    end
+  rescue StandardError => e
+    elog(e)
+    print_error(e.message)
+  end
+
+  #
+  # Tab completion for the features command
+  #
+  # @param str [String] the string currently being typed before tab was hit
+  # @param words [Array<String>] the previously completed words on the command line.  words is always
+  # at least 1 when tab completion has reached this stage since the command itself has been completed
+  def cmd_features_tabs(_str, words)
+    if words.length == 1
+      return %w[set print]
+    end
+
+    _command_name, action, *rest = words
+    ret = []
+    case action
+    when 'set'
+      feature_name, _value = rest
+
+      if framework.features.exists?(feature_name)
+        ret += %w[true false]
+      else
+        ret += framework.features.names
+      end
+    end
+
+    ret
+  end
 
   def cmd_history(*args)
     length = Readline::HISTORY.length
@@ -774,7 +951,7 @@ class Core
         print_status("Successfully loaded plugin: #{inst.name}")
       end
     rescue ::Exception => e
-      elog("Error loading plugin #{path}: #{e}\n\n#{e.backtrace.join("\n")}", 'core', 0)
+      elog("Error loading plugin #{path}", error: e)
       print_error("Failed to load plugin from #{path}: #{e}")
     end
   end
@@ -1000,7 +1177,7 @@ class Core
         cmd_route_help
       end
     rescue => error
-      elog("#{error}\n\n#{error.backtrace.join("\n")}")
+      elog(error)
       print_error(error.message)
     end
   end
@@ -1064,6 +1241,12 @@ class Core
   def cmd_save(*args)
     # Save the console config
     driver.save_config
+
+    begin
+      FeatureManager.instance.save_config
+    rescue StandardException => e
+      elog(e)
+    end
 
     # Save the framework's datastore
     begin
@@ -1616,6 +1799,9 @@ class Core
       return false
     end
 
+    # Save the old value before changing it, in case we need to compare it
+    old_value = datastore[name]
+
     begin
       if append
         datastore[name] = datastore[name] + value
@@ -1624,12 +1810,17 @@ class Core
       end
     rescue OptionValidateError => e
       print_error(e.message)
-      elog(e.message)
+      elog('Exception encountered in cmd_set', error: e)
     end
 
     # Set PAYLOAD from TARGET
     if name.upcase == 'TARGET' && active_module && (active_module.exploit? || active_module.evasion?)
       active_module.import_target_defaults
+    end
+
+    # If the new SSL value already set in datastore[name] is different from the old value, warn the user
+    if name.casecmp('SSL') == 0 && datastore[name] != old_value
+      print_warning("Changing the SSL option's value may require changing RPORT!")
     end
 
     print_line("#{name} => #{datastore[name]}")
@@ -2290,9 +2481,7 @@ class Core
         res << str+str[0, str.length - 1]
       else
         option_values_target_addrs().each do |addr|
-          res << addr+'/32'
-          res << addr+'/24'
-          res << addr+'/16'
+          res << addr
         end
       end
 

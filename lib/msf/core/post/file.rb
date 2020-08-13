@@ -1,4 +1,6 @@
 # -*- coding: binary -*-
+#
+require 'rex/post/meterpreter/extensions/stdapi/command_ids'
 
 module Msf::Post::File
 
@@ -74,6 +76,24 @@ module Msf::Post::File
   end
 
   alias ls dir
+
+  # create and mark directory for cleanup
+  def mkdir(path)
+    vprint_status("Creating directory #{path}")
+    if session.type == 'meterpreter'
+      vprint_status("Meterpreter Session")
+      result = session.fs.dir.mkdir(path)
+    else
+      if session.platform == 'windows'
+        result = cmd_exec("mkdir \"#{path}\"")
+      else
+        result = cmd_exec("mkdir -p '#{path}'")
+      end
+    end
+    vprint_status("#{path} created")
+    register_dir_for_cleanup(path)
+    result
+  end
 
   #
   # See if +path+ exists on the remote system and is a directory
@@ -408,7 +428,7 @@ module Msf::Post::File
       raise "`chmod' method does not support Windows systems"
     end
 
-    if session.type == 'meterpreter' && session.commands.include?('stdapi_fs_chmod')
+    if session.type == 'meterpreter' && session.commands.include?(Rex::Post::Meterpreter::Extensions::Stdapi::COMMAND_ID_STDAPI_FS_CHMOD)
       session.fs.file.chmod(path, mode)
     else
       cmd_exec("chmod #{mode.to_s(8)} '#{path}'")
